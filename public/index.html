@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Hakuca.com</title>
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@webrtc/adapter@latest"></script>
+  <script src="https://cdn.jsdelivr.net/npm/simple-peer@latest"></script>
+  <link href="https://cdn.jsdelivr.net/npm/tailwindcss@latest/dist/tailwind.min.css" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Hakukka&display=swap" rel="stylesheet">
+</head>
+    <body class="bg-gray-900 text-gray-100 font-sans">
+
+      <div class="absolute top-4 left-4 z-10">
+        <a href="#" class="text-2xl text-white font-bold hover:text-blue-400 transition duration-300 ease-in-out">Hakuca.com</a>
+      </div>
+
+      <div class="flex flex-col lg:flex-row w-full h-screen justify-center items-center p-4 space-y-4 lg:space-y-0 lg:space-x-6">
+
+        <div class="flex flex-col items-center w-full max-w-[320px] h-[280px]">
+          <video id="localVideo" autoplay muted class="w-full h-full rounded-xl bg-transparent"></video>
+        </div>
+
+        <div class="flex flex-col items-center w-full max-w-[320px] h-[280px]">
+          <video id="remoteVideo" autoplay class="w-full h-full rounded-xl bg-transparent"></video>
+        </div>
+
+      </div>
+
+      <div class="flex justify-center w-full mt-[-50px]">
+        <button id="startButton" class="px-8 py-4 bg-blue-600 text-white rounded-full text-lg shadow-md hover:bg-blue-700 transition duration-300 ease-in-out transform hover:scale-105">
+          Iniciar Chat
+        </button>
+      </div>
+
+      <div class="flex justify-center w-full px-4 mt-8 lg:mt-0">
+        <div class="w-full max-w-[420px] p-6 bg-gray-100 rounded-2xl overflow-y-auto h-[300px]">
+        </div>
+        <div class="flex mt-4 w-full max-w-[420px]">
+          <input type="text" id="chatInput" class="w-full p-2 rounded-l-lg border-2 border-gray-600 bg-gray-900 text-gray-100" placeholder="Escribe un mensaje...">
+          <button id="sendButton" class="px-6 py-2 bg-blue-600 text-white rounded-r-lg hover:bg-blue-700 transition duration-300">
+            Enviar
+          </button>
+        </div>
+      </div>
+
+
+
+
+
+</body>
+
+
+  <script>
+    const socket = io();
+    let localStream;
+    let peerConnection;
+    const startButton = document.getElementById('startButton');
+    const localVideo = document.getElementById('localVideo');
+    const remoteVideo = document.getElementById('remoteVideo');
+    const chatArea = document.getElementById('chatArea');
+    const chatInput = document.getElementById('chatInput');
+    const sendButton = document.getElementById('sendButton');
+
+    let isCameraOn = false;
+    let mediaStream = null;
+    let isChatting = false;
+
+    startButton.addEventListener('click', toggleChat);
+    sendButton.addEventListener('click', sendMessage);
+
+    function toggleChat() {
+      if (!isChatting) {
+        startButton.textContent = 'Stop';
+        isChatting = true;
+        startConnection();
+      } else if (isChatting && startButton.textContent === 'Stop') {
+        startButton.textContent = 'Really?';
+      } else if (startButton.textContent === 'Really?') {
+        startButton.textContent = 'Stop';
+        stopConnection();
+      }
+    }
+
+    async function startConnection() {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+      localVideo.srcObject = stream;
+      localStream = stream;
+
+      peerConnection = new RTCPeerConnection();
+      localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
+
+      const offer = await peerConnection.createOffer();
+      await peerConnection.setLocalDescription(offer);
+
+      socket.emit('offer', offer);
+
+      peerConnection.onicecandidate = (event) => {
+        if (event.candidate) {
+          socket.emit('ice-candidate', event.candidate);
+        }
+      };
+
+      peerConnection.ontrack = (event) => {
+        remoteVideo.srcObject = event.streams[0];
+      };
+    }
+
+    function stopConnection() {
+      localStream.getTracks().forEach(track => track.stop());
+      localVideo.srcObject = null;
+      remoteVideo.srcObject = null;
+      peerConnection.close();
+      peerConnection = null;
+      isChatting = false;
+      startButton.textContent = 'Iniciar Chat';
+    }
+
+    socket.on('offer', async (offer) => {
+      if (!peerConnection) {
+        const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+        localVideo.srcObject = stream;
+        localStream = stream;
+
+        peerConnection = new RTCPeerConnection();
+        localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
+      }
+
+      await peerConnection.setRemoteDescription(offer);
+      const answer = await peerConnection.createAnswer();
+      await peerConnection.setLocalDescription(answer);
+      socket.emit('answer', answer);
+    });
+
+    socket.on('answer', (answer) => {
+      peerConnection.setRemoteDescription(answer);
+    });
+
+    socket.on('ice-candidate', (candidate) => {
+      peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
+    });
+
+    // Función para enviar un mensaje
+    function sendMessage() {
+      const message = chatInput.value;
+      if (message.trim()) {
+        // Mostrar el mensaje en el área de chat como "You"
+        appendMessage('You', message);
+        socket.emit('chat-message', { user: 'you', message: message });
+        chatInput.value = ''; // Limpiar el campo de texto
+      }
+    }
+
+    // Función para mostrar el mensaje en el área de chat
+    function appendMessage(user, message) {
+      const messageElement = document.createElement('div');
+      messageElement.classList.add('p-2', 'my-2', 'rounded-lg');
+      if (user === 'you') {
+        messageElement.classList.add('bg-blue-600', 'text-white', 'text-right');
+        messageElement.textContent = message;
+      } else {
+        messageElement.classList.add('bg-gray-600', 'text-white', 'text-left');
+        messageElement.textContent = message;
+      }
+      chatArea.appendChild(messageElement);
+      chatArea.scrollTop = chatArea.scrollHeight; // Desplazar hacia abajo
+    }
+
+    socket.on('chat-message', (data) => {
+      appendMessage(data.user === 'you' ? 'stranger' : 'you', data.message);
+    });
+  </script>
+
+</body>
+</html>
